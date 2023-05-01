@@ -7,8 +7,11 @@
 
 #include "stdc++.h"
 #include <array>
+#include "/usr/local/opt/libomp/include/omp.h"
 
 using namespace std;
+
+#define NUM_THREADS 1
 
 enum direction
 {
@@ -264,12 +267,111 @@ vector<sum> get_sums(int **matrix, int m, int n)
     return sums;
 }
 
+// Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
+bool checkSum(int **sol_mat, sum _sum)
+{
+    int hint = _sum.hint;
+    // COORD.first is the row index
+    // COOORD.second is the column index
+    int row_idx = _sum.start.first;
+    int col_idx = _sum.start.second;
+
+    // Check for a row sum
+    if (_sum.dir == direction::d_right)
+    {
+        int end_idx = _sum.end.second;
+
+        // Continue iteration until there is a currently empty cell or end of the sum region.
+        while (col_idx < end_idx && sol_mat[row_idx][col_idx] > 0)
+        {
+            // Substract the remaining sum by the value inside the sum region.
+            hint -= sol_mat[row_idx][col_idx];
+            // The elements that are currently placed are more than the sum:
+            if (hint < 0)
+                return false;
+            col_idx++;
+        }
+
+        // If end of the sum region, and numbers don't add up to sum:
+        if (col_idx == end_idx)
+        {
+            if (hint > 0)
+                return false;
+        }
+        // If an empty cell is present and current numbers already equal to sum:
+        else
+        {
+            if (hint == 0)
+                return false;
+        }
+    }
+
+    // Check for a column sum
+    else
+    {
+        int end_idx = _sum.end.first;
+
+        // Continue iteration until there is a currently empty cell or end of the sum region.
+        while (row_idx < end_idx && sol_mat[row_idx][col_idx] > 0)
+        {
+            // Substract the remaining sum by the value inside the sum region.
+            hint -= sol_mat[row_idx][col_idx];
+            // The elements that are currently placed are more than the sum:
+            if (hint < 0)
+                return false;
+            row_idx++;
+        }
+
+        // If end of the sum region, and numbers don't add up to sum:
+        if (row_idx == end_idx)
+        {
+            if (hint > 0)
+                return false;
+        }
+        // If an empty cell is present and current numbers already equal to sum:
+        else
+        {
+            if (hint == 0)
+                return false;
+        }
+    }
+    return true;
+}
+
+// Checks a given row whether it has duplicates.
+bool checkRow(int **sol_mat, int row_index, int m, int n)
+{
+    vector<bool> checks(9, true);
+    for (int i = 0; i < 9; i++)
+    {
+        checks[i] = false;
+    }
+
+    for (int i = 0; i < n; i++)
+    {
+        if (sol_mat[row_index][i] > 0)
+        {
+            if (checks[sol_mat[row_index][i] - 1])
+                return false;
+            checks[sol_mat[row_index][i] - 1] = true;
+        }
+    }
+    return true;
+}
+
 bool solution(int **mat, int **sol_mat, vector<sum> sums, int m, int n)
 {
-
     // TO DO: Write the solution
     // You can use any algorithm and data type
     // Write your solution to file in main function using sol_to_mat() after solving it
+
+#pragma omp parallel num_threads(NUM_THREADS)
+    {
+#pragma omp task
+        {
+        }
+    }
+
     return false;
 }
 
