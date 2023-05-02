@@ -11,7 +11,7 @@
 
 using namespace std;
 
-#define NUM_THREADS 1
+#define NUM_THREADS 4
 
 enum direction
 {
@@ -267,8 +267,47 @@ vector<sum> get_sums(int **matrix, int m, int n)
     return sums;
 }
 
+// Enum for sums.
+// Success: it is valid or has potential to be valid.
+// Over: Sum of values in sum cells are so big that filling remaining cells cannot produce a valid result.
+// Under: Sum of values in sum cells are so small that filling remaining cells cannot produce a valid result.
+enum sumStatus
+{
+    success,
+    over,
+    under
+};
+
+sumStatus checkSumStatus(int remaining_sum, int remaining_cells)
+{
+    int current_max_num = 9;
+    int current_min_num = 1;
+    int max_num = 0;
+    int min_num = 0;
+
+    for (int i = 0; i < remaining_cells; i++)
+    {
+        max_num += current_max_num;
+        min_num += current_min_num;
+        current_max_num--;
+        current_min_num++;
+    }
+
+    // remaining_sum > maximum value that can fit into remaining_cells:.
+    // We need to put bigger values to cells: anything containing smaller nums will be wrong
+    if (remaining_sum > max_num)
+        return sumStatus::under;
+
+    // remaining_sum < minimum value that can fit into remaining_cells:.
+    // We need to put smaller values to cells: anything containing bigger nums will be wrong
+    if (remaining_sum < min_num)
+        return sumStatus::over;
+
+    return sumStatus::success;
+}
+
 // Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
-bool checkSum(int **sol_mat, sum _sum)
+sumStatus checkSum(int **sol_mat, sum _sum)
 {
     int hint = _sum.hint;
     // COORD.first is the row index
@@ -286,23 +325,11 @@ bool checkSum(int **sol_mat, sum _sum)
         {
             // Substract the remaining sum by the value inside the sum region.
             hint -= sol_mat[row_idx][col_idx];
-            // The elements that are currently placed are more than the sum:
-            if (hint < 0)
-                return false;
+            sumStatus status = checkSumStatus(hint, end_idx - col_idx - 1);
+            // If sum status is not valid, return the status.
+            if (status != sumStatus::success)
+                return status;
             col_idx++;
-        }
-
-        // If end of the sum region, and numbers don't add up to sum:
-        if (col_idx == end_idx)
-        {
-            if (hint > 0)
-                return false;
-        }
-        // If an empty cell is present and current numbers already equal to sum:
-        else
-        {
-            if (hint == 0)
-                return false;
         }
     }
 
@@ -316,26 +343,15 @@ bool checkSum(int **sol_mat, sum _sum)
         {
             // Substract the remaining sum by the value inside the sum region.
             hint -= sol_mat[row_idx][col_idx];
-            // The elements that are currently placed are more than the sum:
-            if (hint < 0)
-                return false;
+            sumStatus status = checkSumStatus(hint, end_idx - row_idx - 1);
+            // If sum status is not valid, return the status.
+            if (status != sumStatus::success)
+                return status;
             row_idx++;
         }
-
-        // If end of the sum region, and numbers don't add up to sum:
-        if (row_idx == end_idx)
-        {
-            if (hint > 0)
-                return false;
-        }
-        // If an empty cell is present and current numbers already equal to sum:
-        else
-        {
-            if (hint == 0)
-                return false;
-        }
     }
-    return true;
+
+    return sumStatus::success;
 }
 
 // Checks a given row whether it has duplicates.
@@ -359,14 +375,46 @@ bool checkRow(int **sol_mat, int row_index, int m, int n)
     return true;
 }
 
+// 3D array to map board cells to the sums they are included in.
+vector<vector<vector<sum *>>> setCell2Sums(vector<sum> &sums, int m, int n)
+{
+    vector<vector<vector<sum *>>> cell_2_sums(m, vector<vector<sum *>>(n, vector<sum *>()));
+
+    for (int i = 0; i < sums.size(); i++)
+    {
+        int start_row = sums[i].start.first;
+        int start_col = sums[i].start.second;
+        int end_row = sums[i].end.first;
+        int end_col = sums[i].end.second;
+
+        sum *tmp = &(sums[i]);
+        if (sums[i].dir == direction::d_right)
+        {
+            for (int j = start_col; j < end_col; j++)
+            {
+                cell_2_sums[start_row][j].push_back(tmp);
+            }
+        }
+        else
+        {
+            for (int j = start_row; j < end_row; j++)
+            {
+                cell_2_sums[j][start_col].push_back(tmp);
+            }
+        }
+    }
+
+    return cell_2_sums;
+}
+
 bool solution(int **mat, int **sol_mat, vector<sum> sums, int m, int n)
 {
     // TO DO: Write the solution
     // You can use any algorithm and data type
     // Write your solution to file in main function using sol_to_mat() after solving it
-
 #pragma omp parallel num_threads(NUM_THREADS)
     {
+        cout << omp_get_thread_num();
 #pragma omp task
         {
         }
