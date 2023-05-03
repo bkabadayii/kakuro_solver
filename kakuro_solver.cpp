@@ -11,7 +11,7 @@
 
 using namespace std;
 
-#define NUM_THREADS 4
+#define NUM_THREADS 16
 
 enum direction
 {
@@ -271,11 +271,13 @@ vector<sum> get_sums(int **matrix, int m, int n)
 // Success: it is valid or has potential to be valid.
 // Over: Sum of values in sum cells are so big that filling remaining cells cannot produce a valid result.
 // Under: Sum of values in sum cells are so small that filling remaining cells cannot produce a valid result.
+// Duplicate: Sum of values in sum cells contain duplicates.
 enum sumStatus
 {
     success,
     over,
-    under
+    under,
+    duplicate
 };
 
 sumStatus checkSumStatus(int remaining_sum, int remaining_cells)
@@ -307,6 +309,10 @@ sumStatus checkSumStatus(int remaining_sum, int remaining_cells)
 }
 
 // Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
+// It also checks for duplicates.
+
+// Possible upgrade:
+// There is probably a guarentee for only checking duplicates at the end because of we are already checking the others before.
 sumStatus checkSum(int **sol_mat, sum _sum)
 {
     int hint = _sum.hint;
@@ -314,6 +320,9 @@ sumStatus checkSum(int **sol_mat, sum _sum)
     // COOORD.second is the column index
     int row_idx = _sum.start.first;
     int col_idx = _sum.start.second;
+
+    // Hash table to check for duplicates.
+    vector<bool> checks(9, false);
 
     // Check for a row sum
     if (_sum.dir == direction::d_right)
@@ -329,6 +338,12 @@ sumStatus checkSum(int **sol_mat, sum _sum)
             // If sum status is not valid, return the status.
             if (status != sumStatus::success)
                 return status;
+
+            // Check for duplicates.
+            if (checks[sol_mat[row_idx][col_idx]])
+                return sumStatus::duplicate;
+
+            checks[sol_mat[row_idx][col_idx]] = true;
             col_idx++;
         }
     }
@@ -347,6 +362,12 @@ sumStatus checkSum(int **sol_mat, sum _sum)
             // If sum status is not valid, return the status.
             if (status != sumStatus::success)
                 return status;
+
+            // Check for duplicates.
+            if (checks[sol_mat[row_idx][col_idx]])
+                return sumStatus::duplicate;
+
+            checks[sol_mat[row_idx][col_idx]] = true;
             row_idx++;
         }
     }
@@ -355,13 +376,10 @@ sumStatus checkSum(int **sol_mat, sum _sum)
 }
 
 // Checks a given row whether it has duplicates.
+// Needs a fix for this function to check a particular row sum rather than a row.
 bool checkRow(int **sol_mat, int row_index, int m, int n)
 {
-    vector<bool> checks(9, true);
-    for (int i = 0; i < 9; i++)
-    {
-        checks[i] = false;
-    }
+    vector<bool> checks(9, false);
 
     for (int i = 0; i < n; i++)
     {
@@ -370,6 +388,24 @@ bool checkRow(int **sol_mat, int row_index, int m, int n)
             if (checks[sol_mat[row_index][i] - 1])
                 return false;
             checks[sol_mat[row_index][i] - 1] = true;
+        }
+    }
+    return true;
+}
+
+// Checks for a given column whether it has duplicates.
+// Needs a fix for this function to check a particular column sum rather than a column.
+bool checkColumn(int **sol_mat, int column_index, int m, int n)
+{
+    vector<bool> checks(9, false);
+
+    for (int i = 0; i < m; i++)
+    {
+        if (sol_mat[i][column_index] > 0)
+        {
+            if (checks[sol_mat[i][column_index] - 1])
+                return false;
+            checks[sol_mat[i][column_index] - 1] = true;
         }
     }
     return true;
@@ -407,22 +443,187 @@ vector<vector<vector<sum *>>> setCell2Sums(vector<sum> &sums, int m, int n)
     return cell_2_sums;
 }
 
-bool solution(int **mat, int **sol_mat, vector<sum> sums, int m, int n)
+int **copyMatrix(int **&mat, int m, int n)
+{
+    int **copy = new int *[m];
+    for (int i = 0; i < m; i++)
+    {
+        copy[i] = new int[n];
+        for (int j = 0; j < n; j++)
+        {
+            copy[i][j] = mat[i][j];
+        }
+    }
+
+    return copy;
+}
+
+int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *>>> &cell_2_sums, int direction)
+{
+    int i = std::ceil(k / m);
+    int j = k % n;
+
+    while (sol_mat[i][j] != -2 && k < m * n)
+    {
+        if (k == m * n - 1)
+        {
+            print_one_matrix(sol_mat, m, n);
+            return sol_mat;
+        }
+        k++;
+        i = std::ceil(k / m);
+        j = k % n;
+    }
+
+    if (direction)
+    {
+        for (int v = 6; v < 10; v++)
+        {
+            sol_mat[i][j] = v;
+            vector<sum *> sums = cell_2_sums[i][j];
+
+            // Check for the first sum.
+            if (sums.size() > 0)
+            {
+                sumStatus status = checkSum(sol_mat, *sums[0]);
+                if (status == sumStatus::over)
+                    return nullptr;
+                if (status != sumStatus::success)
+                    continue;
+            }
+
+            // Check for the second sum.
+            if (sums.size() > 1)
+            {
+                sumStatus status = checkSum(sol_mat, *sums[1]);
+                if (status == sumStatus::over)
+                    return nullptr;
+                if (status != sumStatus::success)
+                    continue;
+            }
+
+            if (k == m * n - 1)
+                return sol_mat;
+
+            int **sol_copy_l = copyMatrix(sol_mat, m, n);
+            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, 0);
+            if (l)
+                return l;
+
+            int **sol_copy_r = copyMatrix(sol_mat, m, n);
+            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1);
+            if (r)
+                return r;
+
+            /*for (int i = 0; i < m; i++)
+            {
+                delete[] l[i];
+                delete[] r[i];
+            }
+            delete[] l;
+            delete[] r;
+            */
+        }
+    }
+    else
+    {
+        for (int v = 5; v > 0; v--)
+        {
+            sol_mat[i][j] = v;
+            vector<sum *> sums = cell_2_sums[i][j];
+
+            // Check for the first sum.
+            if (sums.size() > 0)
+            {
+                sumStatus status = checkSum(sol_mat, *sums[0]);
+                if (status == sumStatus::under)
+                    return nullptr;
+                if (status != sumStatus::success)
+                    continue;
+            }
+
+            // Check for the second sum.
+            if (sums.size() > 1)
+            {
+                sumStatus status = checkSum(sol_mat, *sums[1]);
+                if (status == sumStatus::under)
+                    return nullptr;
+                if (status != sumStatus::success)
+                    continue;
+            }
+
+            if (k == m * n - 1)
+            {
+                print_one_matrix(sol_mat, m, n);
+                return sol_mat;
+            }
+
+            int **sol_copy_l = copyMatrix(sol_mat, m, n);
+            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, 0);
+            if (l)
+                return l;
+
+            int **sol_copy_r = copyMatrix(sol_mat, m, n);
+            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1);
+            if (r)
+                return r;
+            /*
+            for (int i = 0; i < m; i++)
+            {
+                delete[] l[i];
+                delete[] r[i];
+            }
+            delete[] l;
+            delete[] r;
+            */
+        }
+    }
+    return nullptr;
+}
+
+bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
 {
     // TO DO: Write the solution
     // You can use any algorithm and data type
     // Write your solution to file in main function using sol_to_mat() after solving it
-#pragma omp parallel num_threads(NUM_THREADS)
+
+    vector<vector<vector<sum *>>> cell_2_sums = setCell2Sums(sums, m, n);
+
+    int **copy1 = copyMatrix(sol_mat, m, n);
+    int **copy2 = copyMatrix(sol_mat, m, n);
+
+    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, 0);
+
+    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1);
+
+    if (l)
     {
-        cout << omp_get_thread_num();
-#pragma omp task
-        {
-        }
+        sol_mat = l;
+        return true;
+    }
+    if (r)
+    {
+        sol_mat = r;
+        return true;
     }
 
     return false;
-}
 
+    /*
+    #pragma omp parallel num_threads(NUM_THREADS)
+        {
+    #pragma omp critical
+            {
+                cout << "MAX THREADS: " << omp_get_max_threads() << endl;
+                cout << "THREAD NUM: " << omp_get_thread_num();
+            }
+    #pragma omp task
+            {
+            }
+        }
+    */
+    return false;
+}
 int main(int argc, char **argv)
 {
 
