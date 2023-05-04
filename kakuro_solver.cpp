@@ -12,6 +12,9 @@
 using namespace std;
 
 #define NUM_THREADS 16
+// #define LEAK_DEBUG
+#define PARTITION_LEFT 5
+#define PARTITION_RIGHT 6
 
 enum direction
 {
@@ -375,42 +378,6 @@ sumStatus checkSum(int **sol_mat, sum _sum)
     return sumStatus::success;
 }
 
-// Checks a given row whether it has duplicates.
-// Needs a fix for this function to check a particular row sum rather than a row.
-bool checkRow(int **sol_mat, int row_index, int m, int n)
-{
-    vector<bool> checks(9, false);
-
-    for (int i = 0; i < n; i++)
-    {
-        if (sol_mat[row_index][i] > 0)
-        {
-            if (checks[sol_mat[row_index][i] - 1])
-                return false;
-            checks[sol_mat[row_index][i] - 1] = true;
-        }
-    }
-    return true;
-}
-
-// Checks for a given column whether it has duplicates.
-// Needs a fix for this function to check a particular column sum rather than a column.
-bool checkColumn(int **sol_mat, int column_index, int m, int n)
-{
-    vector<bool> checks(9, false);
-
-    for (int i = 0; i < m; i++)
-    {
-        if (sol_mat[i][column_index] > 0)
-        {
-            if (checks[sol_mat[i][column_index] - 1])
-                return false;
-            checks[sol_mat[i][column_index] - 1] = true;
-        }
-    }
-    return true;
-}
-
 // 3D array to map board cells to the sums they are included in.
 vector<vector<vector<sum *>>> setCell2Sums(vector<sum> &sums, int m, int n)
 {
@@ -480,7 +447,7 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
     {
         if (k == m * n - 1)
         {
-            return sol_mat;
+            return copyMatrix(sol_mat, m, n);
         }
         k++;
         i = std::ceil(k / m);
@@ -493,6 +460,7 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
         sol_mat[i][j] = v;
         vector<sum *> sums = cell_2_sums[i][j];
         bool is_valid = true;
+
         // Check for the first sum.
         if (sums.size() > 0)
         {
@@ -530,27 +498,34 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
         {
             // If all cells are done, return the solution.
             if (k == m * n - 1)
-                return sol_mat;
+                return copyMatrix(sol_mat, m, n);
 
             int **sol_copy_l = copyMatrix(sol_mat, m, n);
             int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, -1, 5);
+
+            // Delete deep copy:
+            for (int i = 0; i < m; i++)
+            {
+                delete[] sol_copy_l[i];
+            }
+            delete[] sol_copy_l;
+
             if (l)
                 return l;
 
             int **sol_copy_r = copyMatrix(sol_mat, m, n);
             int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1, 6);
+
+            // Delete deep copy:
+            for (int i = 0; i < m; i++)
+            {
+                delete[] sol_copy_r[i];
+            }
+            delete[] sol_copy_r;
+
             if (r)
                 return r;
         }
-
-        /*for (int i = 0; i < m; i++)
-        {
-            delete[] l[i];
-            delete[] r[i];
-        }
-        delete[] l;
-        delete[] r;
-        */
     }
     return nullptr;
 }
@@ -566,9 +541,15 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
     int **copy1 = copyMatrix(sol_mat, m, n);
     int **copy2 = copyMatrix(sol_mat, m, n);
 
-    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, -1, 5);
+    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, -1, PARTITION_LEFT);
 
-    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1, 6);
+    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1, PARTITION_RIGHT);
+
+#ifdef LEAK_DEBUG
+    int empty;
+    cout << "Checking for leaks...";
+    cin >> empty;
+#endif
 
     if (l)
     {
@@ -580,8 +561,6 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
         sol_mat = r;
         return true;
     }
-
-    return false;
 
     /*
     #pragma omp parallel num_threads(NUM_THREADS)
@@ -598,6 +577,7 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
     */
     return false;
 }
+
 int main(int argc, char **argv)
 {
 
@@ -618,10 +598,15 @@ int main(int argc, char **argv)
     print_one_matrix(sol_mat, m, n);
 
     vector<sum> sums = get_sums(mat, m, n);
+
+    double start = omp_get_wtime();
     solution(mat, sol_mat, sums, m, n);
+    double end = omp_get_wtime();
+
     print_one_matrix(sol_mat, m, n);
     sol_to_file(mat, sol_mat, m, n, "solution.kakuro");
 
+    cout << "Time taken: " << ((end - start) * 1000) << " (ms)." << endl;
     for (int i = 0; i < n; i++)
     {
         delete mat[i];
