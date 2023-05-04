@@ -458,16 +458,28 @@ int **copyMatrix(int **&mat, int m, int n)
     return copy;
 }
 
-int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *>>> &cell_2_sums, int direction)
+// Edge checker for the for loop in kakuro_task function.
+// If direction is -1: checks for v > 0
+// If direction is  1: checks for v < 10
+bool checkEnd(const int &direction, const int &v)
+{
+    if (direction == -1)
+        return v > 0;
+    return v < 10;
+}
+
+// Direction is -1: (try all starting from "start_from" to 0)
+// Direction is  1:  (try all starting from "start_from" to 1)
+int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *>>> &cell_2_sums, int direction, int start_from)
 {
     int i = std::ceil(k / m);
     int j = k % n;
 
+    // Pass cells that are not fillable.
     while (sol_mat[i][j] != -2 && k < m * n)
     {
         if (k == m * n - 1)
         {
-            print_one_matrix(sol_mat, m, n);
             return sol_mat;
         }
         k++;
@@ -475,108 +487,70 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
         j = k % n;
     }
 
-    if (direction)
+    // Main Task: Check all possible values between [start_from, 10] or [0, start_from] depending on direction.
+    for (int v = start_from; checkEnd(direction, v); v += direction)
     {
-        for (int v = 6; v < 10; v++)
+        sol_mat[i][j] = v;
+        vector<sum *> sums = cell_2_sums[i][j];
+        bool is_valid = true;
+        // Check for the first sum.
+        if (sums.size() > 0)
         {
-            sol_mat[i][j] = v;
-            vector<sum *> sums = cell_2_sums[i][j];
+            sumStatus status = checkSum(sol_mat, *sums[0]);
 
-            // Check for the first sum.
-            if (sums.size() > 0)
-            {
-                sumStatus status = checkSum(sol_mat, *sums[0]);
-                if (status == sumStatus::over)
-                    return nullptr;
-                if (status != sumStatus::success)
-                    continue;
-            }
+            // There cannot be any solution here if the following conditions are faced.
+            if (direction == 1 && status == sumStatus::over)
+                return nullptr;
 
-            // Check for the second sum.
-            if (sums.size() > 1)
-            {
-                sumStatus status = checkSum(sol_mat, *sums[1]);
-                if (status == sumStatus::over)
-                    return nullptr;
-                if (status != sumStatus::success)
-                    continue;
-            }
+            if (direction == 0 && status == sumStatus::under)
+                return nullptr;
 
+            if (status != sumStatus::success)
+                is_valid = false;
+        }
+
+        // Check for the second sum.
+        if (sums.size() > 1)
+        {
+            sumStatus status = checkSum(sol_mat, *sums[1]);
+
+            // There cannot be any solution here if the following conditions are faced.
+            if (direction == 1 && status == sumStatus::over)
+                return nullptr;
+
+            if (direction == 0 && status == sumStatus::under)
+                return nullptr;
+
+            if (status != sumStatus::success)
+                is_valid = false;
+        }
+
+        // If no errors are present, continue with the next cell.
+        if (is_valid)
+        {
+            // If all cells are done, return the solution.
             if (k == m * n - 1)
                 return sol_mat;
 
             int **sol_copy_l = copyMatrix(sol_mat, m, n);
-            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, 0);
+            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, -1, 5);
             if (l)
                 return l;
 
             int **sol_copy_r = copyMatrix(sol_mat, m, n);
-            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1);
+            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1, 6);
             if (r)
                 return r;
-
-            /*for (int i = 0; i < m; i++)
-            {
-                delete[] l[i];
-                delete[] r[i];
-            }
-            delete[] l;
-            delete[] r;
-            */
         }
-    }
-    else
-    {
-        for (int v = 5; v > 0; v--)
+
+        /*for (int i = 0; i < m; i++)
         {
-            sol_mat[i][j] = v;
-            vector<sum *> sums = cell_2_sums[i][j];
-
-            // Check for the first sum.
-            if (sums.size() > 0)
-            {
-                sumStatus status = checkSum(sol_mat, *sums[0]);
-                if (status == sumStatus::under)
-                    return nullptr;
-                if (status != sumStatus::success)
-                    continue;
-            }
-
-            // Check for the second sum.
-            if (sums.size() > 1)
-            {
-                sumStatus status = checkSum(sol_mat, *sums[1]);
-                if (status == sumStatus::under)
-                    return nullptr;
-                if (status != sumStatus::success)
-                    continue;
-            }
-
-            if (k == m * n - 1)
-            {
-                print_one_matrix(sol_mat, m, n);
-                return sol_mat;
-            }
-
-            int **sol_copy_l = copyMatrix(sol_mat, m, n);
-            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, 0);
-            if (l)
-                return l;
-
-            int **sol_copy_r = copyMatrix(sol_mat, m, n);
-            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1);
-            if (r)
-                return r;
-            /*
-            for (int i = 0; i < m; i++)
-            {
-                delete[] l[i];
-                delete[] r[i];
-            }
-            delete[] l;
-            delete[] r;
-            */
+            delete[] l[i];
+            delete[] r[i];
         }
+        delete[] l;
+        delete[] r;
+        */
     }
     return nullptr;
 }
@@ -592,9 +566,9 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
     int **copy1 = copyMatrix(sol_mat, m, n);
     int **copy2 = copyMatrix(sol_mat, m, n);
 
-    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, 0);
+    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, -1, 5);
 
-    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1);
+    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1, 6);
 
     if (l)
     {
