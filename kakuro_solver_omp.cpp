@@ -12,6 +12,7 @@
 using namespace std;
 
 #define NUM_THREADS 16
+#define MAX_DEPTH 8
 // #define LEAK_DEBUG
 #define PARTITION_LEFT 5
 #define PARTITION_RIGHT 6
@@ -437,7 +438,7 @@ bool checkEnd(const int &direction, const int &v)
 
 // Direction is -1: (try all starting from "start_from" to 0)
 // Direction is  1:  (try all starting from "start_from" to 1)
-int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *>>> &cell_2_sums, int direction, int start_from)
+int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *>>> &cell_2_sums, int direction, int start_from, bool &solution_found)
 {
     int i = std::ceil(k / m);
     int j = k % n;
@@ -447,6 +448,7 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
     {
         if (k == m * n - 1)
         {
+            solution_found = true;
             return copyMatrix(sol_mat, m, n);
         }
         k++;
@@ -455,7 +457,7 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
     }
 
     // Main Task: Check all possible values between [start_from, 10] or [0, start_from] depending on direction.
-    for (int v = start_from; checkEnd(direction, v); v += direction)
+    for (int v = start_from; checkEnd(direction, v) && !solution_found; v += direction)
     {
         sol_mat[i][j] = v;
         vector<sum *> sums = cell_2_sums[i][j];
@@ -498,30 +500,40 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
         {
             // If all cells are done, return the solution.
             if (k == m * n - 1)
-                return copyMatrix(sol_mat, m, n);
-
-            int **sol_copy_l = copyMatrix(sol_mat, m, n);
-            int **l = kakuro_task(sol_copy_l, k + 1, m, n, cell_2_sums, -1, PARTITION_LEFT);
-
-            // Delete deep copy:
-            for (int i = 0; i < m; i++)
             {
-                delete[] sol_copy_l[i];
+                solution_found = true;
+                return copyMatrix(sol_mat, m, n);
             }
-            delete[] sol_copy_l;
+            int **l = nullptr;
+            int **r = nullptr;
+            int **copy = nullptr;
+#pragma omp task shared(l, cell_2_sums, m, n, sol_mat, solution_found) firstprivate(copy)
+            {
+                copy = copyMatrix(sol_mat, m, n);
+                l = kakuro_task(copy, k + 1, m, n, cell_2_sums, -1, PARTITION_LEFT, solution_found);
 
+                // Delete deep copy:
+                for (int i = 0; i < m; i++)
+                {
+                    delete[] copy[i];
+                }
+                delete[] copy;
+            }
+#pragma omp task shared(r, cell_2_sums, m, n, sol_mat, solution_found) firstprivate(copy)
+            {
+                copy = copyMatrix(sol_mat, m, n);
+                r = kakuro_task(copy, k + 1, m, n, cell_2_sums, 1, PARTITION_RIGHT, solution_found);
+
+                // Delete deep copy:
+                for (int i = 0; i < m; i++)
+                {
+                    delete[] copy[i];
+                }
+                delete[] copy;
+            }
+#pragma omp taskwait
             if (l)
                 return l;
-
-            int **sol_copy_r = copyMatrix(sol_mat, m, n);
-            int **r = kakuro_task(sol_copy_r, k + 1, m, n, cell_2_sums, 1, PARTITION_RIGHT);
-
-            // Delete deep copy:
-            for (int i = 0; i < m; i++)
-            {
-                delete[] sol_copy_r[i];
-            }
-            delete[] sol_copy_r;
 
             if (r)
                 return r;
@@ -538,12 +550,26 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
 
     vector<vector<vector<sum *>>> cell_2_sums = setCell2Sums(sums, m, n);
 
-    int **copy1 = copyMatrix(sol_mat, m, n);
-    int **copy2 = copyMatrix(sol_mat, m, n);
+    int **copy = nullptr;
+    int **l = nullptr;
+    int **r = nullptr;
+    bool solution_found = false;
+#pragma omp parallel
+#pragma omp single
+    {
+#pragma omp task shared(sol_mat, m, n, l) firstprivate(copy)
+        {
+            copy = copyMatrix(sol_mat, m, n);
+            l = kakuro_task(copy, 0, m, n, cell_2_sums, -1, PARTITION_LEFT, solution_found);
+        }
 
-    int **l = kakuro_task(copy1, 0, m, n, cell_2_sums, -1, PARTITION_LEFT);
-
-    int **r = kakuro_task(copy2, 0, m, n, cell_2_sums, 1, PARTITION_RIGHT);
+#pragma omp task shared(sol_mat, m, n, r) firstprivate(copy)
+        {
+            copy = copyMatrix(sol_mat, m, n);
+            r = kakuro_task(copy, 0, m, n, cell_2_sums, 1, PARTITION_RIGHT, solution_found);
+        }
+        cout << "NUM THREADS: " << omp_get_num_threads() << endl;
+    }
 
 #ifdef LEAK_DEBUG
     int empty;
@@ -578,6 +604,41 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
     return false;
 }
 
+void test(int i)
+{
+#pragma omp task firstprivate(i)
+    {
+        if (i < 20)
+        {
+            test(i + 1);
+        }
+
+        cout << i << ") Hello world! FROM: " << omp_get_thread_num() << endl;
+    }
+}
+
+void control_test()
+{
+#pragma omp parallel
+#pragma omp single
+    {
+        // test(0);
+    }
+
+    cout << "TEST 2: " << endl;
+
+    double start = omp_get_wtime();
+#pragma omp parallel for
+    for (int i = 0; i < 1000; i++)
+    {
+        cout << omp_get_thread_num();
+    }
+    double end = omp_get_wtime();
+
+    cout << endl;
+    cout << "TEST 2 TIME TAKEN: " << ((end - start) * 1000) << endl;
+}
+
 int main(int argc, char **argv)
 {
 
@@ -607,6 +668,7 @@ int main(int argc, char **argv)
     sol_to_file(mat, sol_mat, m, n, "solution.kakuro");
 
     cout << "Time taken: " << ((end - start) * 1000) << " (ms)." << endl;
+
     for (int i = 0; i < n; i++)
     {
         delete mat[i];
@@ -615,6 +677,15 @@ int main(int argc, char **argv)
 
     delete mat;
     delete sol_mat;
+
+    /*
+    cout << endl;
+    cout << "TEST HERE:" << endl;
+    double _start = omp_get_wtime();
+    control_test();
+    double _end = omp_get_wtime();
+    cout << "Time taken: " << ((_end - _start) * 1000) << " (ms)." << endl;
+    */
 
     return 0;
 }
