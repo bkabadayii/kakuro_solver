@@ -11,8 +11,6 @@
 
 using namespace std;
 
-#define NUM_THREADS 16
-#define MAX_DEPTH 8
 // #define LEAK_DEBUG
 #define PARTITION_LEFT 5
 #define PARTITION_RIGHT 6
@@ -314,9 +312,6 @@ sumStatus checkSumStatus(int remaining_sum, int remaining_cells)
 
 // Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
 // It also checks for duplicates.
-
-// Possible upgrade:
-// There is probably a guarentee for only checking duplicates at the end because of we are already checking the others before.
 sumStatus checkSum(int **sol_mat, sum _sum)
 {
     int hint = _sum.hint;
@@ -411,6 +406,7 @@ vector<vector<vector<sum *>>> setCell2Sums(vector<sum> &sums, int m, int n)
     return cell_2_sums;
 }
 
+// Generate deep copy of a matrix.
 int **copyMatrix(int **&mat, int m, int n)
 {
     int **copy = new int *[m];
@@ -424,6 +420,16 @@ int **copyMatrix(int **&mat, int m, int n)
     }
 
     return copy;
+}
+
+// Delete a dynamically allocated matrix.
+void deleteMatrix(int **&mat, int m, int n)
+{
+    for (int i = 0; i < m; i++)
+    {
+        delete[] mat[i];
+    }
+    delete[] mat;
 }
 
 // Edge checker for the for loop in kakuro_task function.
@@ -511,25 +517,15 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
             {
                 copy = copyMatrix(sol_mat, m, n);
                 l = kakuro_task(copy, k + 1, m, n, cell_2_sums, -1, PARTITION_LEFT, solution_found);
-
                 // Delete deep copy:
-                for (int i = 0; i < m; i++)
-                {
-                    delete[] copy[i];
-                }
-                delete[] copy;
+                deleteMatrix(copy, m, n);
             }
 #pragma omp task shared(r, cell_2_sums, m, n, sol_mat, solution_found) firstprivate(copy)
             {
                 copy = copyMatrix(sol_mat, m, n);
                 r = kakuro_task(copy, k + 1, m, n, cell_2_sums, 1, PARTITION_RIGHT, solution_found);
-
                 // Delete deep copy:
-                for (int i = 0; i < m; i++)
-                {
-                    delete[] copy[i];
-                }
-                delete[] copy;
+                deleteMatrix(copy, m, n);
             }
 #pragma omp taskwait
             if (l)
@@ -544,31 +540,26 @@ int **kakuro_task(int **sol_mat, int k, int m, int n, vector<vector<vector<sum *
 
 bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
 {
-    // TO DO: Write the solution
-    // You can use any algorithm and data type
-    // Write your solution to file in main function using sol_to_mat() after solving it
-
     vector<vector<vector<sum *>>> cell_2_sums = setCell2Sums(sums, m, n);
 
     int **copy = nullptr;
     int **l = nullptr;
     int **r = nullptr;
     bool solution_found = false;
+
 #pragma omp parallel
 #pragma omp single
     {
-#pragma omp task shared(sol_mat, m, n, l) firstprivate(copy)
+#pragma omp task shared(l, m, n, sol_mat, solution_found, cell_2_sums) firstprivate(copy)
         {
             copy = copyMatrix(sol_mat, m, n);
             l = kakuro_task(copy, 0, m, n, cell_2_sums, -1, PARTITION_LEFT, solution_found);
         }
-
-#pragma omp task shared(sol_mat, m, n, r) firstprivate(copy)
+#pragma omp task shared(l, m, n, sol_mat, solution_found, cell_2_sums) firstprivate(copy)
         {
             copy = copyMatrix(sol_mat, m, n);
             r = kakuro_task(copy, 0, m, n, cell_2_sums, 1, PARTITION_RIGHT, solution_found);
         }
-        cout << "NUM THREADS: " << omp_get_num_threads() << endl;
     }
 
 #ifdef LEAK_DEBUG
@@ -587,56 +578,7 @@ bool solution(int **mat, int **&sol_mat, vector<sum> sums, int m, int n)
         sol_mat = r;
         return true;
     }
-
-    /*
-    #pragma omp parallel num_threads(NUM_THREADS)
-        {
-    #pragma omp critical
-            {
-                cout << "MAX THREADS: " << omp_get_max_threads() << endl;
-                cout << "THREAD NUM: " << omp_get_thread_num();
-            }
-    #pragma omp task
-            {
-            }
-        }
-    */
     return false;
-}
-
-void test(int i)
-{
-#pragma omp task firstprivate(i)
-    {
-        if (i < 20)
-        {
-            test(i + 1);
-        }
-
-        cout << i << ") Hello world! FROM: " << omp_get_thread_num() << endl;
-    }
-}
-
-void control_test()
-{
-#pragma omp parallel
-#pragma omp single
-    {
-        // test(0);
-    }
-
-    cout << "TEST 2: " << endl;
-
-    double start = omp_get_wtime();
-#pragma omp parallel for
-    for (int i = 0; i < 1000; i++)
-    {
-        cout << omp_get_thread_num();
-    }
-    double end = omp_get_wtime();
-
-    cout << endl;
-    cout << "TEST 2 TIME TAKEN: " << ((end - start) * 1000) << endl;
 }
 
 int main(int argc, char **argv)
@@ -668,6 +610,9 @@ int main(int argc, char **argv)
     sol_to_file(mat, sol_mat, m, n, "solution.kakuro");
 
     cout << "Time taken: " << ((end - start) * 1000) << " (ms)." << endl;
+#pragma omp parallel
+#pragma omp single
+    cout << "NUM THREADS: " << omp_get_num_threads() << endl;
 
     for (int i = 0; i < n; i++)
     {
@@ -677,15 +622,5 @@ int main(int argc, char **argv)
 
     delete mat;
     delete sol_mat;
-
-    /*
-    cout << endl;
-    cout << "TEST HERE:" << endl;
-    double _start = omp_get_wtime();
-    control_test();
-    double _end = omp_get_wtime();
-    cout << "Time taken: " << ((_end - _start) * 1000) << " (ms)." << endl;
-    */
-
     return 0;
 }
