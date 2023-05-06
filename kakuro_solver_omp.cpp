@@ -212,6 +212,7 @@ COORD find_end(int **matrix, int m, int n, int i, int j, direction dir)
             }
         }
     }
+    return COORD();
 }
 
 vector<sum> get_sums(int **matrix, int m, int n)
