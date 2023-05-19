@@ -1,12 +1,12 @@
 #include <iostream>
 #include <string>
-
 #include <fstream>
 #include <sstream>
 #include <vector>
-
-#include <bits/stdc++.h>
 #include <array>
+#include <stack>
+#include <bits/stdc++.h>
+#include <math.h>
 
 using namespace std;
 
@@ -165,6 +165,8 @@ COORD find_end(int **matrix, int m, int n, int i, int j, direction dir)
             }
         }
     }
+
+    return COORD();
 }
 
 vector<sum> get_sums(int **matrix, int m, int n)
@@ -380,15 +382,356 @@ void print_flattened_matrix(int *h_sol_mat, int m, int n)
 // CUDA FUNCTIONS //
 ///////////////////
 
-__global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_sum_ends_x, int *d_sum_ends_y,
-                              int *d_sum_hints, int *d_sum_lengths, int *d_sum_dirs, int *d_sol_mat, int *d_perms, i nt *d_t_mats, int m, int n, int no_sums, volatile bool *solved)
+__device__ void print_device_matrix(int **mat, int m, int n)
 {
+    for (int i = 0; i < m; i++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            printf(" %d", mat[i][j]);
+        }
+        printf("\n");
+    }
+}
 
-    // TO DO
+__device__ void print_device_matrix(int *mat, int size)
+{
+    for (int i = 0; i < size; i++)
+    {
+        printf(" %d", mat[i]);
+    }
+}
 
-    // About volatile bool* solved:
-    // You can get idea from https://stackoverflow.com/questions/12505750/how-can-a-global-function-return-a-value-or-break-out-like-c-c-does%5B/url%5D for how to break out of a CUDA kernel
-    // You may or may not use it
+// Enum for sums.
+// Success: it is valid or has potential to be valid.
+// Over: Sum of values in sum cells are so big that filling remaining cells cannot produce a valid result.
+// Under: Sum of values in sum cells are so small that filling remaining cells cannot produce a valid result.
+// Duplicate: Sum of values in sum cells contain duplicates.
+enum sumStatus
+{
+    success,
+    over,
+    under,
+    duplicate
+};
+
+__device__ bool checkSumStatus(int remaining_sum, int remaining_cells)
+{
+    int current_max_num = 9;
+    int current_min_num = 1;
+    int max_num = 0;
+    int min_num = 0;
+
+    for (int i = 0; i < remaining_cells; i++)
+    {
+        max_num += current_max_num;
+        min_num += current_min_num;
+        current_max_num--;
+        current_min_num++;
+    }
+
+    // remaining_sum > maximum value that can fit into remaining_cells:.
+    // We need to put bigger values to cells: anything containing smaller nums will be wrong
+    if (remaining_sum > max_num)
+        return false;
+
+    // remaining_sum < minimum value that can fit into remaining_cells:.
+    // We need to put smaller values to cells: anything containing bigger nums will be wrong
+    if (remaining_sum < min_num)
+        return false;
+
+    return true;
+}
+
+// Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
+// It also checks for duplicates.
+__device__ bool checkSum(int *&d_sum_starts_x, int *&d_sum_starts_y, int *&d_sum_ends_x, int *&d_sum_ends_y,
+                         int *&d_sum_hints, int *&d_sum_lengths, int *&d_sum_dirs, int *&board, int d_m,
+                         int d_n, int d_sum_idx, int k)
+{
+    int hint = d_sum_hints[d_sum_idx];
+
+    int row_idx = d_sum_starts_x[d_sum_idx];
+    int col_idx = d_sum_starts_y[d_sum_idx];
+
+    /*
+        // Hash table to check for duplicates.
+        bool *checks = new bool[9];
+        for (int i = 0; i < 9; i++)
+        {
+            checks[i] = false;
+        }
+    */
+    // printf("Checks up : %s\n", checks[9] ? "true" : "false");
+
+    // Check for a row sum
+    if (d_sum_dirs[d_sum_idx] == 1)
+    {
+        int end_idx = d_sum_ends_y[d_sum_idx];
+
+        // Continue iteration until there is a currently empty cell or end of the sum region.
+        while (col_idx < end_idx && board[(row_idx * d_m) + col_idx] > 0)
+        {
+            // Substract the remaining sum by the value inside the sum region.
+            hint -= board[(row_idx * d_m) + col_idx];
+            bool status = checkSumStatus(hint, end_idx - col_idx - 1);
+            // If sum status is not valid, return the status.
+            if (!status)
+            {
+                // delete[] checks;
+                return false;
+            }
+
+            // Check for duplicates.
+            // if (checks[board[(row_idx * d_m) + col_idx]])
+            if ((row_idx * d_m) + col_idx != k && board[k] == board[(row_idx * d_m) + col_idx])
+            {
+                // delete[] checks;
+                return false;
+            }
+
+            // checks[board[(row_idx * d_m) + col_idx]] = true;
+            col_idx++;
+        }
+    }
+
+    // Check for a column sum
+    else
+    {
+        int end_idx = d_sum_ends_x[d_sum_idx];
+
+        // Continue iteration until there is a currently empty cell or end of the sum region.
+
+        while (row_idx < end_idx && board[(row_idx * d_m) + col_idx] > 0)
+        {
+            // Substract the remaining sum by the value inside the sum region.
+            hint -= board[(row_idx * d_m) + col_idx];
+            bool status = checkSumStatus(hint, end_idx - row_idx - 1);
+            // If sum status is not valid, return the status.
+            if (!status)
+            {
+                // delete[] checks;
+                return false;
+            }
+
+            // if (checks[current_element])
+            if ((row_idx * d_m) + col_idx != k && board[k] == board[(row_idx * d_m) + col_idx])
+            {
+                // delete[] checks;
+                return false;
+            }
+
+            // checks[board[(row_idx * d_m) + col_idx]] = true;
+            row_idx++;
+        }
+    }
+    // delete[] checks;
+    return true;
+}
+
+// 2D array to map board cells to the flattened sum array indexes they are included in.
+__device__ int **setCell2SumIdx(int *&h_sum_starts_x, int *&h_sum_starts_y, int *&h_sum_ends_x, int *&h_sum_ends_y,
+                                int *&h_sum_hints, int *&h_sum_lengths, int *&h_sum_dirs,
+                                int m, int n, int h_sum_count)
+{
+    int **cell_2_sum_idx = new int *[m * n];
+
+    for (int i = 0; i < m * n; i++)
+    {
+        cell_2_sum_idx[i] = new int[2];
+        for (int j = 0; j < 2; j++)
+        {
+            cell_2_sum_idx[i][j] = -1;
+        }
+    }
+
+    for (int i = 0; i < h_sum_count; i++)
+    {
+        int start_row = h_sum_starts_x[i];
+        int start_col = h_sum_starts_y[i];
+        int end_row = h_sum_ends_x[i];
+        int end_col = h_sum_ends_y[i];
+
+        int start_k = start_row * m + start_col;
+        int end_k = end_row * m + end_col;
+
+        if (h_sum_dirs[i] == direction::d_right)
+        {
+            for (int j = start_k; j < end_k; j++)
+            {
+                if (cell_2_sum_idx[j][0] == -1) // If first sum
+                {
+                    cell_2_sum_idx[j][0] = i;
+                }
+                else
+                {
+                    cell_2_sum_idx[j][1] = i;
+                }
+            }
+        }
+        else
+        {
+            for (int j = start_k; j < end_k; j += m)
+            {
+                if (cell_2_sum_idx[j][0] == -1) // If first sum
+                {
+                    cell_2_sum_idx[j][0] = i;
+                }
+                else
+                {
+                    cell_2_sum_idx[j][1] = i;
+                }
+            }
+        }
+    }
+
+    return cell_2_sum_idx;
+}
+
+// Generate deep copy of a matrix.
+__device__ int **copyMatrix(int **mat, int m, int n)
+{
+    int **copy = new int *[m];
+    for (int i = 0; i < m; i++)
+    {
+        copy[i] = new int[n];
+        for (int j = 0; j < n; j++)
+        {
+            copy[i][j] = mat[i][j];
+        }
+    }
+
+    return copy;
+}
+
+__device__ int *copyMatrixFlattened(int *mat, int size)
+{
+    int *copy = new int[size];
+    for (int i = 0; i < size; i++)
+    {
+        copy[i] = mat[i];
+    }
+    return copy;
+}
+
+// Delete a dynamically allocated matrix.
+__device__ void deleteMatrix(int **mat, int size)
+{
+    for (int i = 0; i < size; i++)
+    {
+        if (mat[i])
+            delete[] mat[i];
+    }
+    delete[] mat;
+}
+
+// Delete a dynamically allocated matrix.
+__device__ void deleteMatrixFlattened(int *mat, int m, int n)
+{
+    delete[] mat;
+}
+
+__global__ void kakuro_solver(int *d_sum_starts_x, int *d_sum_starts_y, int *d_sum_ends_x, int *d_sum_ends_y,
+                              int *d_sum_hints, int *d_sum_lengths, int *d_sum_dirs, int *d_sol_mat, int **tasks,
+                              int m, int n, int k, int **d_cell2sum_idx, int **new_tasks, int dim)
+{
+    int *board = copyMatrixFlattened(tasks[blockIdx.x], m * n);
+    int num = threadIdx.x + 1;
+    board[k] = num;
+
+    int sum_idx_1 = d_cell2sum_idx[k][0];
+    int sum_idx_2 = d_cell2sum_idx[k][1];
+    bool status;
+
+    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_lengths, d_sum_dirs, board, m, n, sum_idx_1, k);
+
+    if (!status)
+    {
+        // printf("THREAD GOT HERE %d\n", threadIdx.x);
+        new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = nullptr;
+        delete[] board;
+        return;
+    }
+
+    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_lengths, d_sum_dirs, board, m, n, sum_idx_2, k);
+    if (!status)
+    {
+        new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = nullptr;
+        delete[] board;
+        return;
+    }
+
+    if (k == m * n - 1)
+    {
+        d_sol_mat = board;
+    }
+    // print_device_matrix(board, m * n);
+    new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = board;
+}
+
+__global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_sum_ends_x, int *d_sum_ends_y,
+                              int *d_sum_hints, int *d_sum_lengths, int *d_sum_dirs, int *d_sol_mat, int *d_t_mats, int m, int n, int no_sums)
+{
+    int **cell_2_sum_idx = setCell2SumIdx(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y,
+                                          d_sum_hints, d_sum_lengths, d_sum_dirs, m, n, no_sums);
+
+    int num_tasks = 1;
+    int **tasks = new int *[num_tasks];
+
+    tasks[0] = copyMatrixFlattened(d_sol_mat, m * n);
+
+    for (int k = 0; k < m * n; k++)
+    {
+        if (tasks[0][k] != -2)
+            continue;
+
+        int num_new_tasks = 9 * num_tasks;
+        int **new_tasks = new int *[num_new_tasks];
+
+        printf("NUM BLOCKS STEP %d: %d\n", k, num_tasks);
+        kakuro_solver<<<num_tasks, 9>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y,
+                                        d_sum_hints, d_sum_lengths, d_sum_dirs, d_sol_mat, tasks,
+                                        m, n, k, cell_2_sum_idx, new_tasks, num_tasks);
+
+        cudaDeviceSynchronize();
+        // Organize and reset tasks and new tasks:
+
+        /*
+            deleteMatrix(tasks, num_tasks);
+            printf("NUM TASKS: %d", num_tasks);
+            for (int i = 0; i < num_tasks; i++)
+            {
+                delete[] tasks[i];
+            }
+            printf("DELETE  TASKS  PASSED\n");
+            // delete[] tasks;
+        */
+        // cudaFree(tasks);
+        num_tasks = 0;
+        for (int i = 0; i < num_new_tasks; i++)
+        {
+            if (new_tasks[i])
+                num_tasks++;
+        }
+
+        tasks = new int *[num_tasks];
+        int task_idx = 0;
+
+        for (int i = 0; i < num_new_tasks; i++)
+        {
+            if (new_tasks[i])
+            {
+                tasks[task_idx] = new_tasks[i];
+                task_idx++;
+            }
+        }
+        // TO DO
+        // About volatile bool* solved:
+        // You can get idea from https://stackoverflow.com/questions/12505750/how-can-a-global-function-return-a-value-or-break-out-like-c-c-does%5B/url%5D for how to break out of a CUDA kernel
+        // You may or may not use it
+    }
+    printf("SOL HERE\n");
+    print_device_matrix(tasks, num_tasks, m * n);
 }
 
 ///////////////////
@@ -423,10 +766,10 @@ int main(int argc, char **argv)
     printf("==prop== #of SM -- %d \n", prop.multiProcessorCount);
     printf("==prop== Max Threads Per Block: -- %d \n", prop.maxThreadsPerBlock);
 
-    int grid_dim =      // TO DO
-        int block_dim = // To DO
+    int grid_dim = 1;  // TO DO
+    int block_dim = 1; // TO DO
 
-        int no_sums = sums.size();
+    int no_sums = sums.size();
 
     // Flattening sums and matrix
     int *h_sum_starts_x = new int[no_sums];
@@ -470,20 +813,17 @@ int main(int argc, char **argv)
     cudaMemcpy(d_sum_dirs, h_sum_dirs, no_sums * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_sol_mat, h_sol_mat, (m * n) * sizeof(int), cudaMemcpyHostToDevice);
 
-    bool *solved;
-    *solved = false;
-    bool *d_solved;
-
-    cudaMalloc(&d_solved, sizeof(bool));
-    cudaMemcpy(d_solved, solved, sizeof(bool), cudaMemcpyHostToDevice);
+    // ALLOCATE 4GB
+    // size_t rsize = 1024ULL * 1024ULL * 1024ULL * 4ULL;
+    // cudaDeviceSetLimit(cudaLimitMallocHeapSize, rsize);
 
     kakuro_kernel<<<grid_dim, block_dim>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints,
-                                           d_sum_lengths, d_sum_dirs, d_sol_mat, d_perms, d_t_mats, m, n,
-                                           no_sums, d_solved);
+                                           d_sum_lengths, d_sum_dirs, d_sol_mat, d_t_mats, m, n,
+                                           no_sums);
     cudaDeviceSynchronize();
     // CUDA
 
-    print_flattened_matrix(d_sol_mat, m, n);
+    // print_flattened_matrix(d_sol_mat, m, n);
     // TO DO sol_mat_flattened_to_file(mat, d_sol_mat, m, n)
     // Similiar to sol_mat, use hints from mat and values from d_sol_mat
 
@@ -510,11 +850,10 @@ int main(int argc, char **argv)
     cudaFree(d_sum_starts_y);
     cudaFree(d_sum_ends_x);
     cudaFree(d_sum_ends_y);
-  cudaFree(d_sum_hints;
-  cudaFree(d_sum_lengths;
-  cudaFree(d_sum_dirs;
-  cudaFree(d_sol_mat;
-  
-  
-  return 0;
+    cudaFree(d_sum_hints);
+    cudaFree(d_sum_lengths);
+    cudaFree(d_sum_dirs);
+    cudaFree(d_sol_mat);
+
+    return 0;
 }
