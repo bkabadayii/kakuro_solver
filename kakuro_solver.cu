@@ -382,6 +382,7 @@ void print_flattened_matrix(int *h_sol_mat, int m, int n)
 // CUDA FUNCTIONS //
 ///////////////////
 
+// For debugging.
 __device__ void print_device_matrix(int **mat, int m, int n)
 {
     for (int i = 0; i < m; i++)
@@ -394,6 +395,7 @@ __device__ void print_device_matrix(int **mat, int m, int n)
     }
 }
 
+// For debugging.
 __device__ void print_device_matrix(int *mat, int size)
 {
     for (int i = 0; i < size; i++)
@@ -401,19 +403,6 @@ __device__ void print_device_matrix(int *mat, int size)
         printf(" %d", mat[i]);
     }
 }
-
-// Enum for sums.
-// Success: it is valid or has potential to be valid.
-// Over: Sum of values in sum cells are so big that filling remaining cells cannot produce a valid result.
-// Under: Sum of values in sum cells are so small that filling remaining cells cannot produce a valid result.
-// Duplicate: Sum of values in sum cells contain duplicates.
-enum sumStatus
-{
-    success,
-    over,
-    under,
-    duplicate
-};
 
 __device__ bool checkSumStatus(int remaining_sum, int remaining_cells)
 {
@@ -430,12 +419,12 @@ __device__ bool checkSumStatus(int remaining_sum, int remaining_cells)
         current_min_num++;
     }
 
-    // remaining_sum > maximum value that can fit into remaining_cells:.
+    // remaining_sum > maximum value that can fit into remaining_cells.
     // We need to put bigger values to cells: anything containing smaller nums will be wrong
     if (remaining_sum > max_num)
         return false;
 
-    // remaining_sum < minimum value that can fit into remaining_cells:.
+    // remaining_sum < minimum value that can fit into remaining_cells.
     // We need to put smaller values to cells: anything containing bigger nums will be wrong
     if (remaining_sum < min_num)
         return false;
@@ -446,23 +435,19 @@ __device__ bool checkSumStatus(int remaining_sum, int remaining_cells)
 // Checks the solution matrix whether it is valid or has potential to be valid for a given sum object.
 // It also checks for duplicates.
 __device__ bool checkSum(int *&d_sum_starts_x, int *&d_sum_starts_y, int *&d_sum_ends_x, int *&d_sum_ends_y,
-                         int *&d_sum_hints, int *&d_sum_lengths, int *&d_sum_dirs, int *&board, int d_m,
-                         int d_n, int d_sum_idx, int k)
+                         int *&d_sum_hints, int *&d_sum_dirs, int *&board, int m,
+                         int n, int d_sum_idx, int k)
 {
+    // If there is no sum, don't check.
+    if (d_sum_idx == -1)
+    {
+        return false;
+    }
+
     int hint = d_sum_hints[d_sum_idx];
 
     int row_idx = d_sum_starts_x[d_sum_idx];
     int col_idx = d_sum_starts_y[d_sum_idx];
-
-    /*
-        // Hash table to check for duplicates.
-        bool *checks = new bool[9];
-        for (int i = 0; i < 9; i++)
-        {
-            checks[i] = false;
-        }
-    */
-    // printf("Checks up : %s\n", checks[9] ? "true" : "false");
 
     // Check for a row sum
     if (d_sum_dirs[d_sum_idx] == 1)
@@ -470,27 +455,23 @@ __device__ bool checkSum(int *&d_sum_starts_x, int *&d_sum_starts_y, int *&d_sum
         int end_idx = d_sum_ends_y[d_sum_idx];
 
         // Continue iteration until there is a currently empty cell or end of the sum region.
-        while (col_idx < end_idx && board[(row_idx * d_m) + col_idx] > 0)
+        while (col_idx < end_idx && board[(row_idx * m) + col_idx] > 0)
         {
             // Substract the remaining sum by the value inside the sum region.
-            hint -= board[(row_idx * d_m) + col_idx];
+            hint -= board[(row_idx * m) + col_idx];
             bool status = checkSumStatus(hint, end_idx - col_idx - 1);
-            // If sum status is not valid, return the status.
+            // If sum status is not valid, return false.
             if (!status)
             {
-                // delete[] checks;
                 return false;
             }
 
             // Check for duplicates.
-            // if (checks[board[(row_idx * d_m) + col_idx]])
-            if ((row_idx * d_m) + col_idx != k && board[k] == board[(row_idx * d_m) + col_idx])
+            if ((row_idx * m) + col_idx != k && board[k] == board[(row_idx * m) + col_idx])
             {
-                // delete[] checks;
                 return false;
             }
 
-            // checks[board[(row_idx * d_m) + col_idx]] = true;
             col_idx++;
         }
     }
@@ -502,37 +483,34 @@ __device__ bool checkSum(int *&d_sum_starts_x, int *&d_sum_starts_y, int *&d_sum
 
         // Continue iteration until there is a currently empty cell or end of the sum region.
 
-        while (row_idx < end_idx && board[(row_idx * d_m) + col_idx] > 0)
+        while (row_idx < end_idx && board[(row_idx * m) + col_idx] > 0)
         {
             // Substract the remaining sum by the value inside the sum region.
-            hint -= board[(row_idx * d_m) + col_idx];
+            hint -= board[(row_idx * m) + col_idx];
             bool status = checkSumStatus(hint, end_idx - row_idx - 1);
-            // If sum status is not valid, return the status.
+
+            // If sum status is not valid, return false.
             if (!status)
             {
-                // delete[] checks;
                 return false;
             }
 
-            // if (checks[current_element])
-            if ((row_idx * d_m) + col_idx != k && board[k] == board[(row_idx * d_m) + col_idx])
+            // Check for duplicates.
+            if ((row_idx * m) + col_idx != k && board[k] == board[(row_idx * m) + col_idx])
             {
-                // delete[] checks;
+
                 return false;
             }
 
-            // checks[board[(row_idx * d_m) + col_idx]] = true;
             row_idx++;
         }
     }
-    // delete[] checks;
     return true;
 }
 
 // 2D array to map board cells to the flattened sum array indexes they are included in.
-__device__ int **setCell2SumIdx(int *&h_sum_starts_x, int *&h_sum_starts_y, int *&h_sum_ends_x, int *&h_sum_ends_y,
-                                int *&h_sum_hints, int *&h_sum_lengths, int *&h_sum_dirs,
-                                int m, int n, int h_sum_count)
+__device__ int **setCell2SumIdx(int *&d_sum_starts_x, int *&d_sum_starts_y, int *&d_sum_ends_x, int *&d_sum_ends_y,
+                                int *&d_sum_dirs, int m, int n, int d_sum_count)
 {
     int **cell_2_sum_idx = new int *[m * n];
 
@@ -545,17 +523,17 @@ __device__ int **setCell2SumIdx(int *&h_sum_starts_x, int *&h_sum_starts_y, int 
         }
     }
 
-    for (int i = 0; i < h_sum_count; i++)
+    for (int i = 0; i < d_sum_count; i++)
     {
-        int start_row = h_sum_starts_x[i];
-        int start_col = h_sum_starts_y[i];
-        int end_row = h_sum_ends_x[i];
-        int end_col = h_sum_ends_y[i];
+        int start_row = d_sum_starts_x[i];
+        int start_col = d_sum_starts_y[i];
+        int end_row = d_sum_ends_x[i];
+        int end_col = d_sum_ends_y[i];
 
         int start_k = start_row * m + start_col;
         int end_k = end_row * m + end_col;
 
-        if (h_sum_dirs[i] == direction::d_right)
+        if (d_sum_dirs[i] == direction::d_right)
         {
             for (int j = start_k; j < end_k; j++)
             {
@@ -604,6 +582,7 @@ __device__ int **copyMatrix(int **mat, int m, int n)
     return copy;
 }
 
+// Generate deep copy of a flatted matrix.
 __device__ int *copyMatrixFlattened(int *mat, int size)
 {
     int *copy = new int[size];
@@ -614,46 +593,30 @@ __device__ int *copyMatrixFlattened(int *mat, int size)
     return copy;
 }
 
-// Delete a dynamically allocated matrix.
-__device__ void deleteMatrix(int **mat, int size)
-{
-    for (int i = 0; i < size; i++)
-    {
-        if (mat[i])
-            delete[] mat[i];
-    }
-    delete[] mat;
-}
-
-// Delete a dynamically allocated matrix.
-__device__ void deleteMatrixFlattened(int *mat, int m, int n)
-{
-    delete[] mat;
-}
-
+// Task generator kernel.
+// Generates possibly valid boards from current tasks i.e. current boards.
+// Each block is responsible for generating and checking 9 boards from previous boards. So, block_size = num_tasks.
+// Each thread is responsible for a single board by inserting threadIdx.x + 1 to the next cell in the board.
+// Store them in 2d array: new_tasks.
 __global__ void kakuro_solver(int *d_sum_starts_x, int *d_sum_starts_y, int *d_sum_ends_x, int *d_sum_ends_y,
-                              int *d_sum_hints, int *d_sum_lengths, int *d_sum_dirs, int *d_sol_mat, int **tasks,
+                              int *d_sum_hints, int *d_sum_dirs, int *d_sol_mat, int **tasks,
                               int m, int n, int k, int **d_cell2sum_idx, int **new_tasks, int dim)
 {
+    // Copy a board regarding to blockIdx.
     int *board = copyMatrixFlattened(tasks[blockIdx.x], m * n);
+
+    // Insert a new number to board regarding to threadIdx.
     int num = threadIdx.x + 1;
     board[k] = num;
 
+    // Get sum indexes from the map.
     int sum_idx_1 = d_cell2sum_idx[k][0];
     int sum_idx_2 = d_cell2sum_idx[k][1];
     bool status;
 
-    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_lengths, d_sum_dirs, board, m, n, sum_idx_1, k);
+    // Check for the first sum.
+    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_dirs, board, m, n, sum_idx_1, k);
 
-    if (!status)
-    {
-        // printf("THREAD GOT HERE %d\n", threadIdx.x);
-        new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = nullptr;
-        delete[] board;
-        return;
-    }
-
-    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_lengths, d_sum_dirs, board, m, n, sum_idx_2, k);
     if (!status)
     {
         new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = nullptr;
@@ -661,20 +624,30 @@ __global__ void kakuro_solver(int *d_sum_starts_x, int *d_sum_starts_y, int *d_s
         return;
     }
 
-    if (k == m * n - 1)
+    // Check for the first sum.
+    status = checkSum(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints, d_sum_dirs, board, m, n, sum_idx_2, k);
+    if (!status)
     {
-        d_sol_mat = board;
+        new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = nullptr;
+        delete[] board;
+        return;
     }
-    // print_device_matrix(board, m * n);
+
+    // If no errors are present, generate a new task from the current state of the board.
     new_tasks[blockDim.x * blockIdx.x + threadIdx.x] = board;
 }
 
+// Kakuro solver controller kernel.
+// This kernel runs with a single block and single thread.
+// Since kakuro_solver is called multiple times for each step, it needs a controller inside the GPU.
+// So that memory transfer does not cost as much as controlling it from the CPU.
 __global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_sum_ends_x, int *d_sum_ends_y,
-                              int *d_sum_hints, int *d_sum_lengths, int *d_sum_dirs, int *d_sol_mat, int *d_t_mats, int m, int n, int no_sums)
+                              int *d_sum_hints, int *d_sum_dirs, int *d_sol_mat, int m, int n, int no_sums)
 {
     int **cell_2_sum_idx = setCell2SumIdx(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y,
-                                          d_sum_hints, d_sum_lengths, d_sum_dirs, m, n, no_sums);
+                                          d_sum_dirs, m, n, no_sums);
 
+    // Start with a single board.
     int num_tasks = 1;
     int **tasks = new int *[num_tasks];
 
@@ -685,28 +658,31 @@ __global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_s
         if (tasks[0][k] != -2)
             continue;
 
+        // Maximum size of tasks that will be generated is 9 * num_tasks, allocate memory for that.
         int num_new_tasks = 9 * num_tasks;
         int **new_tasks = new int *[num_new_tasks];
 
+#ifdef DEBUG
         printf("NUM BLOCKS STEP %d: %d\n", k, num_tasks);
-        kakuro_solver<<<num_tasks, 9>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y,
-                                        d_sum_hints, d_sum_lengths, d_sum_dirs, d_sol_mat, tasks,
-                                        m, n, k, cell_2_sum_idx, new_tasks, num_tasks);
+#endif
 
+        // Run kakuro_solver for the current tasks / boards.
+        kakuro_solver<<<num_tasks, 9>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y,
+                                        d_sum_hints, d_sum_dirs, d_sol_mat, tasks, m, n, k, cell_2_sum_idx, new_tasks, num_tasks);
+
+        // Wait for kakuro_solver to finish.
         cudaDeviceSynchronize();
+
         // Organize and reset tasks and new tasks:
 
-        /*
-            deleteMatrix(tasks, num_tasks);
-            printf("NUM TASKS: %d", num_tasks);
-            for (int i = 0; i < num_tasks; i++)
-            {
-                delete[] tasks[i];
-            }
-            printf("DELETE  TASKS  PASSED\n");
-            // delete[] tasks;
-        */
-        // cudaFree(tasks);
+        // Delete previous tasks:
+        for (int i = 0; i < num_tasks; i++)
+        {
+            delete[] tasks[i];
+        }
+        delete[] tasks;
+
+        // Count new number of tasks.
         num_tasks = 0;
         for (int i = 0; i < num_new_tasks; i++)
         {
@@ -714,6 +690,7 @@ __global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_s
                 num_tasks++;
         }
 
+        // Allocate memory for new tasks.
         tasks = new int *[num_tasks];
         int task_idx = 0;
 
@@ -725,18 +702,47 @@ __global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_s
                 task_idx++;
             }
         }
-        // TO DO
-        // About volatile bool* solved:
-        // You can get idea from https://stackoverflow.com/questions/12505750/how-can-a-global-function-return-a-value-or-break-out-like-c-c-does%5B/url%5D for how to break out of a CUDA kernel
-        // You may or may not use it
+        delete[] new_tasks;
     }
+
+    for (int i = 0; i < m * n; i++)
+    {
+        d_sol_mat[i] = tasks[0][i];
+    }
+#ifdef DEBUG
     printf("SOL HERE\n");
-    print_device_matrix(tasks, num_tasks, m * n);
+    print_device_matrix(d_sol_mat, m * n);
+    printf("\n\n");
+#endif
 }
 
 ///////////////////
 // CUDA FUNCTIONS //
 ///////////////////
+
+// Write solution to file.
+void sol_mat_flattened_to_file(int **mat, int *d_sol_mat, int m, int n, string fname)
+{
+    ofstream to_write(fname);
+    to_write << m << " " << n << "\n";
+
+    int *h_sol_mat_f = new int[m * n];
+    cudaMemcpy(h_sol_mat_f, d_sol_mat, m * n * sizeof(int), cudaMemcpyDeviceToHost);
+
+    for (int i = 0; i < m; i++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            if (mat[i][j] != -2)
+                to_write << mat[i][j] << " ";
+            else
+                to_write << h_sol_mat_f[i * m + j] << " ";
+        }
+        to_write << "\n";
+    }
+
+    to_write.close();
+}
 
 int main(int argc, char **argv)
 {
@@ -766,8 +772,8 @@ int main(int argc, char **argv)
     printf("==prop== #of SM -- %d \n", prop.multiProcessorCount);
     printf("==prop== Max Threads Per Block: -- %d \n", prop.maxThreadsPerBlock);
 
-    int grid_dim = 1;  // TO DO
-    int block_dim = 1; // TO DO
+    int grid_dim = 1;
+    int block_dim = 1;
 
     int no_sums = sums.size();
 
@@ -813,18 +819,23 @@ int main(int argc, char **argv)
     cudaMemcpy(d_sum_dirs, h_sum_dirs, no_sums * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_sol_mat, h_sol_mat, (m * n) * sizeof(int), cudaMemcpyHostToDevice);
 
-    // ALLOCATE 4GB
-    // size_t rsize = 1024ULL * 1024ULL * 1024ULL * 4ULL;
-    // cudaDeviceSetLimit(cudaLimitMallocHeapSize, rsize);
+    // ALLOCATE 8GB
+    size_t rsize = 1024ULL * 1024ULL * 1024ULL * 8ULL;
+    cudaDeviceSetLimit(cudaLimitMallocHeapSize, rsize);
 
     kakuro_kernel<<<grid_dim, block_dim>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints,
-                                           d_sum_lengths, d_sum_dirs, d_sol_mat, d_t_mats, m, n,
-                                           no_sums);
+                                           d_sum_dirs, d_sol_mat, m, n, no_sums);
     cudaDeviceSynchronize();
     // CUDA
 
-    // print_flattened_matrix(d_sol_mat, m, n);
-    // TO DO sol_mat_flattened_to_file(mat, d_sol_mat, m, n)
+    int *h_sol_mat_f = new int[m * n];
+    cudaMemcpy(h_sol_mat_f, d_sol_mat, m * n * sizeof(int), cudaMemcpyDeviceToHost);
+    print_flattened_matrix(h_sol_mat_f, m, n);
+
+    string fname = argv[1];
+    fname = fname.substr(0, fname.length() - 7) + "_solution.kakuro";
+
+    sol_mat_flattened_to_file(mat, d_sol_mat, m, n, fname);
     // Similiar to sol_mat, use hints from mat and values from d_sol_mat
 
     for (int i = 0; i < n; i++)
