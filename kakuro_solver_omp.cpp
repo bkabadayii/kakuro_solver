@@ -5,9 +5,9 @@
 #include <sstream>
 #include <vector>
 
-#include "stdc++.h"
+#include <bits/stdc++.h>
 #include <array>
-#include "/usr/local/opt/libomp/include/omp.h"
+#include <omp.h>
 
 using namespace std;
 
