@@ -689,7 +689,11 @@ __global__ void kakuro_kernel(int *d_sum_starts_x, int *d_sum_starts_y, int *d_s
             if (new_tasks[i])
                 num_tasks++;
         }
-
+        if (num_tasks == 0)
+        {
+            tasks[0] = d_sol_mat;
+            break;
+        }
         // Allocate memory for new tasks.
         tasks = new int *[num_tasks];
         int task_idx = 0;
@@ -797,7 +801,7 @@ int main(int argc, char **argv)
     print_flattened_matrix(h_sol_mat, m, n);
 
     // Declare device pointers and copy data into device
-    int *d_sum_starts_x, *d_sum_starts_y, *d_sum_ends_x, *d_sum_ends_y, *d_sum_hints, *d_sum_lengths, *d_sum_dirs, *d_sol_mat, *d_t_mats;
+    int *d_sum_starts_x, *d_sum_starts_y, *d_sum_ends_x, *d_sum_ends_y, *d_sum_hints, *d_sum_lengths, *d_sum_dirs, *d_sol_mat;
 
     cudaMalloc(&d_sum_starts_x, no_sums * sizeof(int));
     cudaMalloc(&d_sum_starts_y, no_sums * sizeof(int));
@@ -807,8 +811,6 @@ int main(int argc, char **argv)
     cudaMalloc(&d_sum_lengths, no_sums * sizeof(int));
     cudaMalloc(&d_sum_dirs, no_sums * sizeof(int));
     cudaMalloc(&d_sol_mat, (m * n) * sizeof(int));
-    cudaMalloc(&d_t_mats, (m * n * grid_dim * block_dim) * sizeof(int)); // Allocating invidual matrix for each GPU thread
-    // You may use this array if you will implement a thread-wise solution
 
     cudaMemcpy(d_sum_starts_x, h_sum_starts_x, no_sums * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_sum_starts_y, h_sum_starts_y, no_sums * sizeof(int), cudaMemcpyHostToDevice);
@@ -823,8 +825,17 @@ int main(int argc, char **argv)
     size_t rsize = 1024ULL * 1024ULL * 1024ULL * 8ULL;
     cudaDeviceSetLimit(cudaLimitMallocHeapSize, rsize);
 
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    cudaEventRecord(start);
     kakuro_kernel<<<grid_dim, block_dim>>>(d_sum_starts_x, d_sum_starts_y, d_sum_ends_x, d_sum_ends_y, d_sum_hints,
                                            d_sum_dirs, d_sol_mat, m, n, no_sums);
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
     cudaDeviceSynchronize();
     // CUDA
 
@@ -836,8 +847,8 @@ int main(int argc, char **argv)
     fname = fname.substr(0, fname.length() - 7) + "_solution.kakuro";
 
     sol_mat_flattened_to_file(mat, d_sol_mat, m, n, fname);
-    // Similiar to sol_mat, use hints from mat and values from d_sol_mat
 
+    cout << "Running Time: " << milliseconds << " (ms)." << endl;
     for (int i = 0; i < n; i++)
     {
         delete mat[i];
@@ -856,7 +867,6 @@ int main(int argc, char **argv)
     delete h_sum_dirs;
     delete h_sol_mat;
 
-    cudaFree(d_t_mats);
     cudaFree(d_sum_starts_x);
     cudaFree(d_sum_starts_y);
     cudaFree(d_sum_ends_x);
